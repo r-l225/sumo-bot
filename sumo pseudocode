@@ -1,0 +1,49 @@
+Define initial states and variables:
+  State = SEARCH
+  IR_front, IR_back = 0  // Initialize IR sensor values
+  distance = 0           // Distance from ultrasonic sensor
+
+Setup motor control and sensor initialization
+
+Main loop:
+  while (true)
+    Read sensor values:
+      IR_front = analogRead(IR_sensor_front)
+      IR_back = analogRead(IR_sensor_back)
+      distance = ultrasonic.read()
+
+    Switch (State):
+      
+      CASE SEARCH:
+        Rotate or move in search pattern
+        If object detected (distance < 20 cm):
+          Stop rotating
+          Set State = APPROACH
+        If boundary detected (IR_front < threshold OR IR_back < threshold):
+          Set State = AVOID_BOUNDARY
+
+      CASE APPROACH:
+        Move forward towards object
+        If boundary detected (IR_front < threshold OR IR_back < threshold):
+          Stop moving forward
+          Set State = AVOID_BOUNDARY
+        If object no longer detected (distance > 20 cm):
+          Set State = SEARCH
+
+      CASE AVOID_BOUNDARY:
+        If front boundary detected (IR_front < threshold):
+          Stop and move backward for a short time
+          Rotate to avoid boundary
+          Set State = SEARCH
+        If rear boundary detected (IR_back < threshold):
+          Stop and move forward for a short time
+          Rotate to avoid boundary
+          Set State = SEARCH
+
+      CASE STOP:
+        Stop all motors
+        End the state machine or perform other tasks
+
+    End switch
+
+End loop
