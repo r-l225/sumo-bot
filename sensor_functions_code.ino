@@ -1,5 +1,5 @@
-// Arduino IR Sensor Code
-
+// Arduino/ESP32 IR and US Sensor Code
+/*
 int IRSensor1 = 9; // connect ir sensor module to Arduino pin 9
 int IRSensor2 = 10; // connect ir sensor module to Arduino pin 10
 int IRSensor3 = 11; // connect ir sensor module to Arduino pin 11
@@ -7,6 +7,14 @@ int IRSensor4 = 12; // connect ir sensor module to Arduino pin 12
 
 int trigPin = 4; // Uno PIN 4
 int echoPin = 6; // Uno PIN 6
+*/
+int IRSensor1 = 34; // connect ir sensor module to ESP32 Feather V2 pin A2
+int IRSensor2 = 39; // connect ir sensor module to ESP32 Feather V2 pin A3
+int IRSensor3 = 36; // connect ir sensor module to ESP32 Feather V2 pin A4
+int IRSensor4 = 4;  // connect ir sensor module to ESP32 Feather V2 pin A5
+
+int trigPin = 4; // connect US sensor TRIGPIN to ESP32 Feather V2 pin A0
+int echoPin = 6; // connect US sensor ECHOPIN to ESP32 Feather V2 pin A1
 
 
 void IR_Sensor_setup(byte IRSensorPIN1, byte IRSensorPIN2, byte IRSensorPIN3, byte IRSensorPIN4){
