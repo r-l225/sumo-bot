@@ -1,0 +1,307 @@
+/*********
+  Rui Santos
+  Complete project details at https://randomnerdtutorials.com  //Dual-Core set-up
+
+  Rui Santos
+  Complete project details at https://RandomNerdTutorials.com/esp32-hc-sr04-ultrasonic-arduino/ //HC-SR04 US-Sensor Code
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files.
+  
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+*********/
+
+//NOTE: Rui's model for running the two cores is used in the set up and task decleration.
+
+
+#include <DFRobot_BMI160.h>
+//This library is authored by DFRobot_haoJ
+//url https://github.com/DFRobot/DFRobot_BMI160
+//It is used to pull readings from the gyroscope in the BMI160 microprocessor
+
+
+//necessary variable declarations for the gyro
+int angle = 0;
+DFRobot_BMI160 bmi160;
+const int8_t i2c_addr = 0x69;
+
+//Task declarations
+TaskHandle_t Task1;
+TaskHandle_t Task2;
+
+/* Feather V2 pins
+const int led1 = 26; //PIN A0 on Adafruit ESP32 Feather V2
+const int led2 = 25; //PIN A1 on Adafruit ESP32 Feather V2
+const int led3 = 27; //PIN 27 on Adafruit ESP32 Feather V2
+
+const int trigPin = 4; //PIN A5 on Adafruit ESP32 Feather V2
+const int echoPin = 36; //PIN A4 on Adafruit ESP32 Feather V2
+
+const int IR_4PIN = 13; //PIN 13 on Adafruit ESP32 Feather V2
+const int IR_3PIN = 12; //PIN 12 on Adafruit ESP32 Feather V2
+*/
+//LED Counter Pins for ESP32-WROOM-32
+const int led1 = 14; //(Red LED)
+const int led2 = 12; // (Blue LED)
+
+//Motor Contorl Pins for ESP32-WROOM-32
+const int L_PWM = 0; // PWM control for left motor
+const int L_IN1 = 15; // Direction control for left motor
+const int L_IN2 = 2; // Direction control for left motor
+const int R_PWM = 4; // PWM control for right motor
+const int R_IN1 = 16; // Direction control for right motor
+const int R_IN2 = 17; // Direction control for right motor
+
+// IR Sensor Pins for ESP32-WROOM-32
+const int FrontLeftSensor = 36;
+const int FrontRightSensor = 39;
+const int BackLeftSensor = 34;
+const int BackRightSensor = 35;
+
+// HC-SR04 Trig/Echo Pins
+const int CenterTrigPin = 26;
+const int CenterEchoPin = 25;
+
+
+long duration;
+float distanceCm;
+//float distanceInch; 
+
+///////////////////////////////////////////////////////////
+void setup() {
+  Serial.begin(115200); 
+  //LED pin declaration
+  pinMode(led1, OUTPUT); //CORE 0 (Red LED)
+  pinMode(led2, OUTPUT); //CORE 1 (Blue LED)
+
+  //Motor Driver Pin Declarations
+  pinMode(L_PWM, OUTPUT);
+  pinMode(L_IN1, OUTPUT);
+  pinMode(L_IN2, OUTPUT);
+  pinMode(R_PWM, OUTPUT);
+  pinMode(R_IN1, OUTPUT);
+  pinMode(R_IN2, OUTPUT);
+
+  //HC-SR04 Ultrasonic Sensor Pin declaration
+  pinMode(CenterTrigPin, OUTPUT); // Sets the trigPin as an Output
+  pinMode(CenterEchoPin, INPUT); // Sets the echoPin as an Input
+
+  //IR Sensor Pin declarations
+  pinMode(FrontLeftSensor, INPUT); 
+  pinMode(FrontRightSensor, INPUT); 
+  pinMode(BackLeftSensor, INPUT); 
+  pinMode(BackRightSensor, INPUT); 
+
+  delay(100);
+
+  //init BMI hardware
+  if (bmi160.softReset() != BMI160_OK){
+    Serial.println("reset false");
+    while(1);
+  }
+  
+  //set and init the bmi160 i2c address
+  if (bmi160.I2cInit(i2c_addr) != BMI160_OK){
+    Serial.println("init false");
+    while(1);
+  }
+
+  //create a task that will be executed in the Task1code() function, with priority 1 and executed on core 0
+  xTaskCreatePinnedToCore(
+                    Task1code,   /* Task function. */
+                    "Task1",     /* name of task. */
+                    10000,       /* Stack size of task */
+                    NULL,        /* parameter of the task */
+                    1,           /* priority of the task, 1 means lower priority */
+                    &Task1,      /* Task handle to keep track of created task */
+                    0);          /* pin task to core 0 */                  
+  delay(500); 
+
+  //create a task that will be executed in the Task2code() function, with priority 1 and executed on core 1
+  xTaskCreatePinnedToCore(
+                    Task2code,   /* Task function. */
+                    "Task2",     /* name of task. */
+                    10000,       /* Stack size of task */
+                    NULL,        /* parameter of the task */
+                    2,           /* priority of the task, 2 means higher priority */
+                    &Task2,      /* Task handle to keep track of created task */
+                    1);          /* pin task to core 1 */
+    delay(500); 
+}
+
+
+
+void moveForward() {
+  Serial.println("Moving Forward.");
+  digitalWrite(L_IN1, HIGH);
+  digitalWrite(L_IN2, LOW);
+  analogWrite(L_PWM, 255);  // Full speed forward for left motor
+
+  digitalWrite(R_IN1, HIGH);
+  digitalWrite(R_IN2, LOW);
+  analogWrite(R_PWM, 255);  // Full speed forward for right motor
+}
+void stopMoving() {
+  Serial.println("Stopped.");
+  analogWrite(L_PWM, 0);  // Stop left motor
+  analogWrite(R_PWM, 0);  // Stop right motor
+}
+void moveBackward() {
+  Serial.println("Moving Backward.");
+  digitalWrite(L_IN1, LOW);
+  digitalWrite(L_IN2, HIGH);
+  analogWrite(L_PWM, 255);  // Full speed backward for left motor
+
+  digitalWrite(R_IN1, LOW);
+  digitalWrite(R_IN2, HIGH);
+  analogWrite(R_PWM, 255);  // Full speed backward for right motor
+}
+void rotateInPlace() {
+  Serial.println("Rotating.");
+  digitalWrite(L_IN1, HIGH);
+  digitalWrite(L_IN2, LOW);
+  analogWrite(L_PWM, 200);  // Medium speed forward for left motor
+
+  digitalWrite(R_IN1, LOW);
+  digitalWrite(R_IN2, HIGH);
+  analogWrite(R_PWM, 200);  // Medium speed backward for right motor
+}
+
+
+uint8_t irSensorRead(){
+  int status1 = digitalRead(FrontLeftSensor); 
+  int status2 = digitalRead(FrontRightSensor);
+  int status3 = digitalRead(BackLeftSensor);
+  int status4 = digitalRead(BackRightSensor);
+  uint8_t status = (status4 <<3) | (status3 <<2) | (status2 <<1) | status1;
+  return status;
+}
+float ultraSensorRead(){
+  float SOUND_SPEED = 0.034;
+  long duration;
+  float distanceCm;
+  // Clears the TRIG_PIN
+  digitalWrite(CenterTrigPin, LOW);
+  delayMicroseconds(2);
+  // Sets the TRIG_PIN on HIGH state for 10 micro seconds
+  digitalWrite(CenterTrigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(CenterTrigPin, LOW);
+  
+  // Reads the ECHO_PIN, returns the sound wave travel time in microseconds
+  duration = pulseIn(CenterEchoPin, HIGH);
+  
+  // Calculate the distance
+  distanceCm = duration * SOUND_SPEED/2;
+  
+  return distanceCm;
+}
+
+
+
+
+void Task1code( void * pvParameters ){
+  Serial.print("Task1 running on core ");
+  Serial.println(xPortGetCoreID());
+  //declare task variables:
+
+  int detection_distance = 0;
+  float angle = 0;
+  int rslt;
+  int trash;
+  float Yaw = 0;
+
+
+  //flash on and off for 5 seconds before beginning code  
+  for (int i = 0; i < 5; i++){
+    if(i%2 != 0){
+      digitalWrite(led1, HIGH);
+      delay(500);
+    }
+    else{
+      digitalWrite(led1, LOW);
+      delay(500);
+    }
+  }
+
+  digitalWrite(led1, LOW);//stay off, turn on if HC-SR04 US Sensor detects object in range
+
+//main code - CORE-0 (lower priority data)
+
+//HC-SR04 Data
+  for(;;){
+    //read Sensor to detect a object
+    detection_distance = ultraSensorRead();
+    if (2.0 < detection_distance < 90.0 ){
+      digitalWrite(led1, HIGH);
+      moveForward();
+    }
+    else{
+      digitalWrite(led1, LOW);
+      while((detection_distance < 2) & (detection_distance > 90)){
+        rotateInPlace();
+        //read gyro data from bmi160
+        } 
+      }
+    }
+}
+//////////////////////////////////////////////////
+
+void Task2code( void * pvParameters ){
+  Serial.print("Task2 running on core ");
+  Serial.println(xPortGetCoreID());
+
+  float detection_distance = 0;
+  float angle = 0;
+  uint8_t boundary_presence = 0x0;
+  
+//flash on and off for 5 seconds before beginning code  
+  for (int i = 0; i < 5; i++){
+    if(i%2 != 0){
+      digitalWrite(led2, HIGH);
+      delay(500);
+    }
+    else{
+      digitalWrite(led2, LOW);
+      delay(500);
+    }
+  }
+
+  digitalWrite(led2, HIGH);//stay on
+  
+//main code - CORE-1 (higher priority data)
+  for(;;){
+    boundary_presence = irSensorRead();
+    switch(boundary_presence){
+      case 15:
+        break;
+      
+      case 7:
+        stopMoving();
+        delay(500);
+        break;
+
+      case 11:
+        stopMoving();
+        delay(500);
+        break;
+      
+      case 13:
+        stopMoving();
+        delay(500);
+        break;
+      
+      case 14:
+        stopMoving();
+        delay(500);
+        break;
+    }
+
+  }
+  delayMicroseconds(500);
+}
+
+void loop() {
+  
+}
