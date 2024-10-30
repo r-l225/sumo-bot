@@ -11,19 +11,19 @@ float angle = 0;  // Store accumulated yaw angle
 int IRSensor1 = 34;
 int IRSensor2 = 39;
 int IRSensor3 = 36;
-int IRSensor4 = 4;
+int IRSensor4 = 35;
 
 // Ultrasonic Sensor Pins
 int trigPin = 4;
 int echoPin = 6;
 
 // Motor Control Pins
-const int L_PWM = 15;
-const int L_IN1 = 32;
-const int L_IN2 = 14;
-const int R_PWM = 33;
-const int R_IN1 = 13;
-const int R_IN2 = 12;
+const int L_PWM = 0;
+const int L_IN1 = 15;
+const int L_IN2 = 2;
+const int R_PWM = 4;
+const int R_IN1 = 16;
+const int R_IN2 = 17;
 
 // Thresholds
 const int detectionThreshold = 80;
@@ -93,6 +93,13 @@ void TaskSensors(void *pvParameters) {
     float distance = ultra_Sensor_read();
     opponentDetected = (distance < detectionThreshold);
 
+    // Print sensor readings
+    Serial.print("[TaskSensors] IR Boundary Code: ");
+    Serial.println(boundaryCode, HEX);
+    Serial.print("[TaskSensors] Ultrasonic Distance: ");
+    Serial.print(distance);
+    Serial.println(" cm");
+
     changeState();
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
@@ -114,15 +121,19 @@ void TaskNavigation(void *pvParameters) {
   for (;;) {
     switch (currentState) {
       case SEARCHING:
+        Serial.println("[TaskNavigation] Bot is SEARCHING for opponents...");
         rotateMotors();
         break;
       case MOVING_FORWARD:
+        Serial.println("[TaskNavigation] Bot is MOVING FORWARD.");
         forwardMotors(); 
         break;
       case AVOID:
+        Serial.println("[TaskNavigation] Bot is AVOIDING boundary.");
         handleBoundaryMovement();
         break;
       case STOPPED:
+        Serial.println("[TaskNavigation] Bot is STOPPED.");
         stopMotors();
         break;
     }
@@ -145,21 +156,6 @@ void readGyroData() {
   }
 }
 
-// Forward movement with gyroscope correction
-void forwardMotors() {
-  readGyroData();  // Get the current yaw angle
-
-  if (angle > 1.0) {  // If the robot is veering right
-    analogWrite(L_PWM, 255);  // Left motor at full speed
-    analogWrite(R_PWM, 200);  // Right motor slightly slower
-  } else if (angle < -1.0) {  // If the robot is veering left
-    analogWrite(L_PWM, 200);  // Left motor slightly slower
-    analogWrite(R_PWM, 255);  // Right motor at full speed
-  } else {
-    analogWrite(L_PWM, 255);  // Both motors at full speed
-    analogWrite(R_PWM, 255);
-  }
-}
 
 void handleBoundaryMovement() {
   switch (boundaryCode) {
@@ -221,17 +217,41 @@ float ultra_Sensor_read() {
   return (duration * 0.034) / 2;
 }
 
+// Forward movement 
+void forwardMotors() {
+  Serial.println("Moving Forward.");
+  digitalWrite(L_IN1, HIGH);
+  digitalWrite(L_IN2, LOW);
+  analogWrite(L_PWM, 255);  // Full speed forward for left motor
+
+  digitalWrite(R_IN1, HIGH);
+  digitalWrite(R_IN2, LOW);
+  analogWrite(R_PWM, 255);  // Full speed forward for right motor
+}
+
 void rotateMotors() {
-  analogWrite(L_PWM, 150);
-  analogWrite(R_PWM, 150);
+  Serial.println("Rotating.");
+  digitalWrite(L_IN1, HIGH);
+  digitalWrite(L_IN2, LOW);
+  analogWrite(L_PWM, 200);  // Medium speed forward for left motor
+
+  digitalWrite(R_IN1, LOW);
+  digitalWrite(R_IN2, HIGH);
+  analogWrite(R_PWM, 200); 
 }
 
 void stopMotors() {
+  digitalWrite(L_IN1, LOW);
+  digitalWrite(L_IN2, LOW);
+  digitalWrite(R_IN1, LOW);
+  digitalWrite(R_IN2, LOW);
   analogWrite(L_PWM, 0);
   analogWrite(R_PWM, 0);
 }
 
 void reverseMotors() {
+  stopMotors();  // Brief stop before changing direction
+  delay(100);
   digitalWrite(L_IN1, LOW);
   digitalWrite(L_IN2, HIGH);
   analogWrite(L_PWM, 255);
@@ -241,11 +261,15 @@ void reverseMotors() {
 }
 
 void turnLeft() {
-  analogWrite(L_PWM, 0);
-  analogWrite(R_PWM, 150);
+  digitalWrite(L_IN1, LOW);
+  digitalWrite(L_IN2, HIGH);
+  analogWrite(L_PWM, 150);  // Reverse left motor
+  analogWrite(R_PWM, 150);  // Forward right motor
 }
 
 void turnRight() {
-  analogWrite(L_PWM, 150);
-  analogWrite(R_PWM, 0);
+  digitalWrite(R_IN1, LOW);
+  digitalWrite(R_IN2, HIGH);
+  analogWrite(L_PWM, 150);  // Forward left motor
+  analogWrite(R_PWM, 150);  // Reverse right motor
 }
