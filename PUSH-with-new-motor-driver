@@ -5,16 +5,16 @@ DFRobot_BMI160 bmi160;
 const int8_t i2c_addr = 0x69;
 float angle = 0;  // Store accumulated yaw angle
 
-// IR Sensor Pins (ESP32 Feather V2)
+// IR Sensor Pins 
 int IRSensor1 = 36;
 int IRSensor2 = 39;
 int IRSensor3 = 34;
 int IRSensor4 = 35;
 
-const int trigPin = 26; //PIN A5 on Adafruit ESP32 Feather V2
-const int echoPin = 25; //PIN A4 on Adafruit ESP32 Feather V2
+const int trigPin = 26; 
+const int echoPin = 25; 
 
-//Motor Contorl Pins for ESP32-WROOM-32
+// Motor Control Pins
 const int L_IN1 = 2;   // Control pin 1 for left motor
 const int L_IN2 = 0;   // Control pin 2 for left motor
 const int R_IN3 = 4;   // Control pin 1 for right motor
@@ -25,7 +25,8 @@ const int PWMFreq = 1000;       // PWM frequency in Hz
 const int PWMResolution = 8;    // PWM resolution (8 bits)
 const int MAX_SPEED = 255;      // Maximum PWM duty cycle
 const int MIN_SPEED = 0;        // Minimum PWM duty cycle
-const int STEP_DELAY = 1000;      // Delay between speed steps (in milliseconds)
+const int STEP_DELAY = 1000;    // Delay between speed steps (in milliseconds)
+
 
 // Thresholds
 const int detectionThreshold = 60;
@@ -47,10 +48,10 @@ void ultra_Sensor_setup();
 float ultra_Sensor_read();
 void TaskSensors(void *pvParameters);
 void TaskNavigation(void *pvParameters);
-void forwardMotors();
-void rotateMotors();
-void stopMotors();
-void reverseMotors();
+void StopMotors();
+void RotateInPlace();
+void Forward();
+void Reverse();
 void turnLeft();
 void turnRight();
 void changeState();
@@ -78,9 +79,10 @@ void setup() {
   ledcAttach(R_IN3,  PWMFreq, PWMResolution);
   ledcAttach(R_IN4,  PWMFreq, PWMResolution);
 
+
   // Create the sensor and navigation tasks
-  xTaskCreatePinnedToCore(TaskSensors, "TaskSensors", 10000, NULL, 2, &Task1, 1);  // Core 1 for sensors and state management
-  xTaskCreatePinnedToCore(TaskNavigation, "TaskNavigation", 10000, NULL, 1, &Task2, 0);  // Core 0 for motor control
+  xTaskCreatePinnedToCore(TaskSensors, "TaskSensors", 10000, NULL, 1, &Task1, 1);  // Core 1 for sensors and state management
+  xTaskCreatePinnedToCore(TaskNavigation, "TaskNavigation", 10000, NULL, 2, &Task2, 0);  // Core 0 for motor control
 }
 
 void loop() {
@@ -117,11 +119,11 @@ void TaskNavigation(void *pvParameters) {
     switch (currentState) {
       case SEARCHING:
       Serial.println("Searshing.");
-       rotateMotors();
+        RotateInPlace();
         break;
       case MOVING_FORWARD:
       Serial.println("Moving Forward.");
-       forwardMotors(); 
+        Forward();
         break;
       case AVOID:
       Serial.println("Avoid.");
@@ -132,7 +134,7 @@ void TaskNavigation(void *pvParameters) {
         StopMotors();
         break;
     }
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+    vTaskDelay(100/ portTICK_PERIOD_MS);
   }
 }
 
@@ -151,35 +153,47 @@ void readGyroData() {
   }
 }
 
+// Forward movement with gyroscope correction
+
 void handleBoundaryMovement() {
   switch (boundaryCode) {
     case 0x7:
-      //turnRight();
-      reverseMotors();
+     Forward();
+      Serial.println("7.");
       break;
     case 0xB:
-      //turnLeft();
-      reverseMotors();
+     Forward();
+      Serial.println("B");
+      break;
+    case 0xD:
+     Reverse();
+      Serial.println("D");
+      break;
+      case 0xE:
+      Reverse();
+      Serial.println("E");
       break;
     case 0x3:
-      reverseMotors();
+      Forward();
+      Serial.println("3");
       break;
     case 0xC:
-      forwardMotors();
+     Reverse();
+      Serial.println("C");
       break;
     case 0x5:
-      //turnRight();
-      reverseMotors();
+      Reverse();
+      sharpLeft();
+      Serial.println("5");
       break;
     case 0xA:
-      //turnLeft();
-      reverseMotors();
-      break;
-    case 0xF:
-      forwardMotors();
+      Reverse();
+      sharpRight();
+      Serial.println("A");
       break;
     default:
-      decelerateStop();
+      StopMotors();
+      Serial.println("Rotating DEFAULT.");
       break;
   }
 }
@@ -196,8 +210,22 @@ uint8_t IR_Sensor_read() {
   int status2 = digitalRead(IRSensor2);
   int status3 = digitalRead(IRSensor3);
   int status4 = digitalRead(IRSensor4);
-  return (status4 << 3) | (status3 << 2) | (status2 << 1) | status1;
+
+  uint8_t boundaryCode = (status4 << 3) | (status3 << 2) | (status2 << 1) | status1;
+  
+  Serial.print("Sensor States: ");
+  Serial.print("Front-Left: "); Serial.print(status1);
+  Serial.print(" | Front-Right: "); Serial.print(status2);
+  Serial.print(" | Back-Left: "); Serial.print(status3);
+  Serial.print(" | Back-Right: "); Serial.println(status4);
+  Serial.print("Boundary Code: ");
+  Serial.println(boundaryCode, BIN);
+
+  return boundaryCode;
 }
+
+
+
 
 void ultra_Sensor_setup() {
   pinMode(trigPin, OUTPUT);
@@ -215,51 +243,55 @@ float ultra_Sensor_read() {
   return (duration * 0.034) / 2;
 }
 
-// Forward movement 
-void forwardMotors() {
-  Serial.println("Moving Forward.");
-  ledcWrite(L_IN1, 100);  // Full speed forward for left motor
+void Forward() {
+  ledcWrite(L_IN1, 80);  // Full speed forward for left motor
   ledcWrite(L_IN2, 0);    // Left motor IN2 off
 
-  ledcWrite(R_IN3, 100);  // Full speed forward for right motor
-  ledcWrite(R_IN4, 0);    // Right motor IN4 off // Full speed forward for right motor
+  ledcWrite(R_IN3, 80);  // Full speed forward for right motor
+  ledcWrite(R_IN4, 0);    // Right motor IN4 off
 }
 
-void rotateMotors() {
-  Serial.println("Rotating.");
-  ledcWrite(L_IN1, 100);  // Medium speed forward for left motor
+void RotateInPlace() {
+  ledcWrite(L_IN1, 80);  // Medium speed forward for left motor
   ledcWrite(L_IN2, 0);    // Left motor IN2 off
 
   ledcWrite(R_IN3, 0);    // Right motor IN3 off
-  ledcWrite(R_IN4, 100);  // Medium speed backward for right motor
+  ledcWrite(R_IN4,80);  // Medium speed backward for right motor
+}
+
+void sharpRight() {
+  Serial.println("Sharp Right Turn.");
+  ledcWrite(L_IN1, 80);  // Full speed forward for left motor
+  ledcWrite(L_IN2, 0);    // Left motor IN2 off
+  ledcWrite(R_IN3, 0);    // Right motor stopped
+  ledcWrite(R_IN4, 0);    // Right motor IN4 off
+  delay(3000); 
+}
+
+void sharpLeft() {
+  Serial.println("Sharp Left Turn.");
+  ledcWrite(L_IN1, 0);  // Full speed forward for left motor
+  ledcWrite(L_IN2, 0);    // Left motor IN2 off
+  ledcWrite(R_IN3, 80);    // Right motor stopped
+  ledcWrite(R_IN4, 0);     // Right motor IN4 off
+  delay(3000); 
+}
+
+void Reverse() {
+  // Move both motors backward
+  ledcWrite(L_IN1, 0);    // Left motor IN1 off
+  ledcWrite(L_IN2, 80);  // Medium speed backward for left motor
+
+  ledcWrite(R_IN3, 0);    // Right motor IN3 off
+  ledcWrite(R_IN4, 80); 
+  delay(5000); 
 }
 
 void StopMotors() {
-  // Set all motor pins to zero for full stop
   ledcWrite(L_IN1, 0);
   ledcWrite(L_IN2, 0);
   ledcWrite(R_IN3, 0);
   ledcWrite(R_IN4, 0);
 }
 
-void decelerateStop() {
-  int currentSpeed = MAX_SPEED;
-  while (currentSpeed > MIN_SPEED) {
-    ledcWrite(L_IN1, currentSpeed);  // Left motor IN1
-    ledcWrite(L_IN2, 0);             // Left motor IN2 off
-    ledcWrite(R_IN3, currentSpeed);  // Right motor IN3
-    ledcWrite(R_IN4, 0);             // Right motor IN4 off
-    currentSpeed -= 10;              // Reduce speed gradually
-    delay(STEP_DELAY);               // Delay between speed steps
-  }
-  StopMotors();
-  Serial.println("Decelerating to Stop");
-}
 
-void reverseMotors() {
-  ledcWrite(L_IN1, 0);    // Left motor IN1 off
-  ledcWrite(L_IN2, 100);  // Medium speed backward for left motor
-
-  ledcWrite(R_IN3, 0);    // Right motor IN3 off
-  ledcWrite(R_IN4, 100);  // Medium speed backward for right motor
-}
