@@ -1,10 +1,3 @@
-#include <DFRobot_BMI160.h> 
-
-// Gyroscope Variables
-DFRobot_BMI160 bmi160;
-const int8_t i2c_addr = 0x69;
-float angle = 0;  // Store accumulated yaw angle
-
 // IR Sensor Pins 
 int IRSensor1 = 36;
 int IRSensor2 = 39;
@@ -29,7 +22,7 @@ const int STEP_DELAY = 1000;    // Delay between speed steps (in milliseconds)
 
 
 // Thresholds
-const int detectionThreshold = 60;
+const int detectionThreshold = 20;
 
 // State Machine
 enum State { SEARCHING, MOVING_FORWARD, AVOID, STOPPED };
@@ -55,7 +48,7 @@ void Reverse();
 void turnLeft();
 void turnRight();
 void changeState();
-void readGyroData();
+
 
 void setup() {
   Serial.begin(115200);
@@ -63,15 +56,6 @@ void setup() {
   IR_Sensor_setup();
   ultra_Sensor_setup();
 
-  // Initialize the BMI160 gyroscope
-  if (bmi160.softReset() != BMI160_OK) {
-    Serial.println("Gyroscope reset failed.");
-    while (1);
-  }
-  if (bmi160.I2cInit(i2c_addr) != BMI160_OK) {
-    Serial.println("Gyroscope initialization failed.");
-    while (1);
-  }
 
   // Motor pin setup
   ledcAttach(L_IN1,  PWMFreq, PWMResolution);
@@ -81,7 +65,7 @@ void setup() {
 
 
   // Create the sensor and navigation tasks
-  xTaskCreatePinnedToCore(TaskSensors, "TaskSensors", 10000, NULL, 1, &Task1, 1);  // Core 1 for sensors and state management
+  xTaskCreatePinnedToCore(TaskSensors, "TaskSensors", 10000, NULL, 2, &Task1, 1);  // Core 1 for sensors and state management
   xTaskCreatePinnedToCore(TaskNavigation, "TaskNavigation", 10000, NULL, 2, &Task2, 0);  // Core 0 for motor control
 }
 
@@ -92,19 +76,44 @@ void loop() {
 void TaskSensors(void *pvParameters) {
   for (;;) {
     boundaryCode = IR_Sensor_read();
+    if (boundaryCode != 0xF) {
+      Serial.println("Avoid.");
+       handleBoundaryMovement();
+  }
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+}
+
+// Core 0: Navigation and motor control
+void TaskNavigation(void *pvParameters) {
+  for (;;) {
+
     float distance = ultra_Sensor_read();
     opponentDetected = (distance < detectionThreshold);
     changeState();
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+
+    switch (currentState) {
+      case SEARCHING:
+      Serial.println("Searching.");
+      RotateInPlace();
+        break;
+      case MOVING_FORWARD:
+      Serial.println("Moving Forward.");
+       Forward();
+        break;
+      case STOPPED:
+      Serial.println("Stopped.");
+       StopMotors();
+        break;
+    }
+    vTaskDelay(100/ portTICK_PERIOD_MS);
   }
 }
 
 // Handle state changes based on sensor input
 void changeState() {
-  if (boundaryCode != 0xF) {
-    currentState = AVOID;
-    Serial.println("State changed to avoid.");
-  } else if (opponentDetected) {
+  
+  if (opponentDetected) {
     currentState = MOVING_FORWARD;
     Serial.println("State changed to move forward.");
   } else {
@@ -112,48 +121,6 @@ void changeState() {
     Serial.println("State cahnged to searching.");
   }
 }
-
-// Core 0: Navigation and motor control
-void TaskNavigation(void *pvParameters) {
-  for (;;) {
-    switch (currentState) {
-      case SEARCHING:
-      Serial.println("Searshing.");
-        RotateInPlace();
-        break;
-      case MOVING_FORWARD:
-      Serial.println("Moving Forward.");
-        Forward();
-        break;
-      case AVOID:
-      Serial.println("Avoid.");
-       handleBoundaryMovement();
-        break;
-      case STOPPED:
-      Serial.println("Stopped.");
-        StopMotors();
-        break;
-    }
-    vTaskDelay(100/ portTICK_PERIOD_MS);
-  }
-}
-
-// Read gyroscope data and update the yaw angle
-void readGyroData() {
-  int16_t accelGyro[6] = {0};
-  if (bmi160.getAccelGyroData(accelGyro) == 0) {
-    float yaw = (accelGyro[2] * 3.14 / 180.0 + 0.18) * 9 / 7;
-    if (yaw > 0.25) {
-      angle += yaw / 3.14;
-    } else if (yaw <= 0.25 && yaw >= -0.25) {
-      angle += 0;
-    } else {
-      angle -= abs(yaw / 3.14);
-    }
-  }
-}
-
-// Forward movement with gyroscope correction
 
 void handleBoundaryMovement() {
   switch (boundaryCode) {
@@ -174,7 +141,7 @@ void handleBoundaryMovement() {
       Serial.println("E");
       break;
     case 0x3:
-      Forward();
+    Forward();
       Serial.println("3");
       break;
     case 0xC:
@@ -182,13 +149,11 @@ void handleBoundaryMovement() {
       Serial.println("C");
       break;
     case 0x5:
-      Reverse();
-      sharpLeft();
+     sharpLeft();
       Serial.println("5");
       break;
     case 0xA:
-      Reverse();
-      sharpRight();
+     sharpRight();
       Serial.println("A");
       break;
     default:
@@ -225,8 +190,6 @@ uint8_t IR_Sensor_read() {
 }
 
 
-
-
 void ultra_Sensor_setup() {
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
@@ -252,39 +215,36 @@ void Forward() {
 }
 
 void RotateInPlace() {
-  ledcWrite(L_IN1, 80);  // Medium speed forward for left motor
-  ledcWrite(L_IN2, 0);    // Left motor IN2 off
+  int speed = 50;     
+    ledcWrite(L_IN1, speed);      
+    ledcWrite(L_IN2, 0);            
+    ledcWrite(R_IN3, speed);  
+    ledcWrite(R_IN4, 0);           
 
-  ledcWrite(R_IN3, 0);    // Right motor IN3 off
-  ledcWrite(R_IN4,80);  // Medium speed backward for right motor
-}
-
+} 
 void sharpRight() {
   Serial.println("Sharp Right Turn.");
-  ledcWrite(L_IN1, 80);  // Full speed forward for left motor
+  ledcWrite(L_IN1, 200);  // Full speed forward for left motor
   ledcWrite(L_IN2, 0);    // Left motor IN2 off
   ledcWrite(R_IN3, 0);    // Right motor stopped
   ledcWrite(R_IN4, 0);    // Right motor IN4 off
-  delay(3000); 
+  delay(1000); 
 }
 
 void sharpLeft() {
   Serial.println("Sharp Left Turn.");
   ledcWrite(L_IN1, 0);  // Full speed forward for left motor
   ledcWrite(L_IN2, 0);    // Left motor IN2 off
-  ledcWrite(R_IN3, 80);    // Right motor stopped
+  ledcWrite(R_IN3, 200);    // Right motor stopped
   ledcWrite(R_IN4, 0);     // Right motor IN4 off
-  delay(3000); 
+  delay(1000); 
 }
 
 void Reverse() {
-  // Move both motors backward
-  ledcWrite(L_IN1, 0);    // Left motor IN1 off
-  ledcWrite(L_IN2, 80);  // Medium speed backward for left motor
-
-  ledcWrite(R_IN3, 0);    // Right motor IN3 off
-  ledcWrite(R_IN4, 80); 
-  delay(5000); 
+    ledcWrite(L_IN1, 0);             // Left motor IN1 off
+    ledcWrite(L_IN2, 80);            // Left motor IN2 on (reverse speed)
+    ledcWrite(R_IN3, 0);             // Right motor IN3 off
+    ledcWrite(R_IN4, 80);            // Right motor IN4 on (reverse speed)   
 }
 
 void StopMotors() {
