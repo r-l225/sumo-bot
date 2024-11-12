@@ -1,0 +1,350 @@
+#include <Arduino.h>
+
+// IR Sensor Pins 
+int IRSensor1 = 36;
+int IRSensor2 = 39;
+int IRSensor3 = 34;
+int IRSensor4 = 35;
+
+const int trigPin = 26; 
+const int echoPin = 25; 
+
+// Motor Control Pins
+const int L_IN1 = 2;   // Control pin 1 for left motor
+const int L_IN2 = 0;   // Control pin 2 for left motor
+const int R_IN3 = 4;   // Control pin 1 for right motor
+const int R_IN4 = 16;  // Control pin 2 for right motor
+
+// PWM frequency and resolution settings for ESP32
+const int PWMFreq = 1000;       // PWM frequency in Hz
+const int PWMResolution = 8;    // PWM resolution (8 bits)
+const int MAX_SPEED = 180;      // Maximum PWM duty cycle
+const int MIN_SPEED = 60;        // Minimum PWM duty cycle
+const int STEP_DELAY = 1000;    // Delay between speed steps (in milliseconds)
+const int BASE_SPEED = 60;
+const int TURN_SPEED = 120;
+
+// Thresholds
+//ULTRASONIC----------------------------
+const int detectionThreshold = 30;
+const int maxDetectionDistance = 80;
+//IR------------------------------------
+const int objectCloseRangeThreshold = 15;
+
+// State Machine
+enum State { SEARCHING, MOVING_FORWARD, AVOID, STOPPED };
+volatile State currentState = SEARCHING;
+
+volatile uint8_t boundaryCode = 0xF;
+volatile bool opponentDetected = false;
+bool leftTurn = true;
+
+// Task handles
+TaskHandle_t Task1;  // Sensor reading task
+TaskHandle_t Task2;  // Motor control task
+
+void IR_Sensor_setup();
+uint8_t IR_Sensor_read();
+void ultra_Sensor_setup();
+float ultra_Sensor_read();
+void TaskSensors(void *pvParameters);
+void TaskNavigation(void *pvParameters);
+void StopMotors();
+void RotateInPlace();
+void ForwardDetect(int speed);
+void Forward();
+void Reverse();
+void turnLeft(int duration);
+void turnRight(int duration);
+void changeState(float distance);
+
+
+void setup() {
+  Serial.begin(115200);
+
+  IR_Sensor_setup();
+  ultra_Sensor_setup();
+
+
+  // Motor pin setup
+  ledcAttach(L_IN1,  PWMFreq, PWMResolution);
+  ledcAttach(L_IN2,  PWMFreq, PWMResolution);
+  ledcAttach(R_IN3,  PWMFreq, PWMResolution);
+  ledcAttach(R_IN4,  PWMFreq, PWMResolution);
+
+
+  // Create the sensor and navigation tasks
+  xTaskCreatePinnedToCore(TaskSensors, "TaskSensors", 10000, NULL, 3, &Task1, 1);  // Core 1 for sensors and state management
+  xTaskCreatePinnedToCore(TaskNavigation, "TaskNavigation", 10000, NULL, 2, &Task2, 0);  // Core 0 for motor control
+}
+
+void loop() {
+}
+
+// Core 1: Sensor data collection and state management
+void TaskSensors(void *pvParameters) {
+  for (;;) {
+    float distance = ultra_Sensor_read();
+    opponentDetected = (distance < maxDetectionDistance);
+
+    // Only read IR sensors if the object is not within close range
+    if (distance > objectCloseRangeThreshold) {
+      boundaryCode = IR_Sensor_read();
+    } else {
+      boundaryCode = 0xF;  // Set boundary code to "no boundary detected" when ignoring IR
+    }
+
+    changeState(distance);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+  }
+}
+
+// Function to calculate speed based on the distance to an object
+int calculateSpeed(float distance) {
+  if (distance > maxDetectionDistance) {
+    // If the object is too far, use the minimum speed
+    return MIN_SPEED;
+  } else if (distance <= detectionThreshold) {
+    // If the object is very close, use the maximum speed
+    return MAX_SPEED;
+  } else {
+    // Map the distance proportionally to the speed range
+    return map(distance, maxDetectionDistance, detectionThreshold, MIN_SPEED, MAX_SPEED);
+  }
+}
+
+// Core 0: Navigation and motor control
+void TaskNavigation(void *pvParameters) {
+  for (;;) {
+
+    float distance = ultra_Sensor_read();
+    int speed = calculateSpeed(distance); 
+
+    switch (currentState) {
+      case SEARCHING:
+      Serial.println("Searching.");
+      ZigzagSearch();
+        break;
+      case MOVING_FORWARD:
+      Serial.println("Moving Forward.");
+       ForwardDetect(speed);
+        break;
+        case AVOID:
+      Serial.println("Avoid.");
+       handleBoundaryMovement();
+        break;
+      case STOPPED:
+      Serial.println("Stopped.");
+      StopMotors();
+        break;
+    }
+    vTaskDelay(100/ portTICK_PERIOD_MS);
+  }
+}
+
+
+// Handle state changes based on sensor input
+void changeState(float distance) {
+  if (distance <= objectCloseRangeThreshold) {
+    // Object is very close; prioritize moving forward towards the object
+    currentState = MOVING_FORWARD;
+    Serial.println("Object within close range, ignoring IR and moving forward.");
+  } else if (boundaryCode != 0xF) {
+    // Boundary detected and object not within close range
+    currentState = AVOID;
+    Serial.println("Boundary detected, switching to AVOID state.");
+  } else if (opponentDetected) {
+    // Object detected but not within close range
+    currentState = MOVING_FORWARD;
+    Serial.println("Object detected at a distance, moving forward.");
+  } else {
+    // No boundary and no object detected within threshold
+    currentState = SEARCHING;
+    Serial.println("Searching for an object.");
+  }
+}
+
+void handleBoundaryMovement() {
+  switch (boundaryCode) {
+    case 0x7:
+     Forward();
+      Serial.println("7.");
+      break;
+    case 0xB:
+     Forward();
+      Serial.println("B");
+      break;
+    case 0xD:
+     Reverse();
+     sharpLeft();
+      Serial.println("D");
+      break;
+      case 0xE:
+      Reverse();
+      sharpRight();
+      Serial.println("E");
+      break;
+    case 0x3:
+    Forward();
+      Serial.println("3");
+      break;
+    case 0xC:
+     Reverse();
+    sharpRight();
+      Serial.println("C");
+      break;
+    case 0x5:
+     sharpLeft();
+      Serial.println("5");
+      break;
+    case 0xA:
+     sharpRight();
+      Serial.println("A");
+      break;
+    default:
+     StopMotors();
+      Serial.println("Rotating DEFAULT.");
+      break;
+  }
+}
+
+// Zigzag search pattern
+void ZigzagSearch() {
+  ForwardDetect(BASE_SPEED);
+  while (true) {
+    boundaryCode = IR_Sensor_read();
+    if (boundaryCode != 0xF) {
+      StopMotors();
+      break;
+    }
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+
+  // Perform 90-degree turn alternately left and right for zigzag pattern
+  if (leftTurn) {
+    turnLeft(300);  // 90-degree left turn 
+  } else {
+    turnRight(300); // 90-degree right turn
+  }
+  leftTurn = !leftTurn;  // Toggle the turn direction
+}
+
+void ForwardDetect(int speed) {
+  ledcWrite(L_IN1, speed); 
+  ledcWrite(L_IN2, 0);   
+
+  ledcWrite(R_IN3, speed); 
+  ledcWrite(R_IN4, 0);   
+}
+
+void Forward() {
+  ledcWrite(L_IN1, 100);  
+  ledcWrite(L_IN2, 0);  
+
+  ledcWrite(R_IN3,100); 
+  ledcWrite(R_IN4, 0);   
+}
+
+void RotateInPlace() {   
+    ledcWrite(L_IN1, 80);      
+    ledcWrite(L_IN2, 0);            
+    ledcWrite(R_IN3, 0);  
+    ledcWrite(R_IN4, 80);           
+
+} 
+void sharpRight() {
+  Serial.println("Sharp Right Turn.");
+  ledcWrite(L_IN1, 200); 
+  ledcWrite(L_IN2, 0);  
+  ledcWrite(R_IN3, 0);    
+  ledcWrite(R_IN4, 0);   
+  delay(100); 
+}
+
+void sharpLeft() {
+  Serial.println("Sharp Left Turn.");
+  ledcWrite(L_IN1, 0);  
+  ledcWrite(L_IN2, 0);   
+  ledcWrite(R_IN3, 200);   
+  ledcWrite(R_IN4, 0);    
+  delay(100); 
+}
+
+void Reverse() {
+    ledcWrite(L_IN1, 0);            
+    ledcWrite(L_IN2, 250);           
+    ledcWrite(R_IN3, 0);           
+    ledcWrite(R_IN4, 250);           
+    delay(500); 
+}
+
+void StopMotors() {
+  ledcWrite(L_IN1, 0);
+  ledcWrite(L_IN2, 0);
+  ledcWrite(R_IN3, 0);
+  ledcWrite(R_IN4, 0);
+}
+
+void turnLeft(int duration) {
+  Serial.println("Turning Left.");
+  ledcWrite(L_IN1, TURN_SPEED);  
+  ledcWrite(L_IN2, 0);          
+  ledcWrite(R_IN3, 0);           
+  ledcWrite(R_IN4, TURN_SPEED); 
+  delay(duration);
+  StopMotors();
+}
+
+void turnRight(int duration) {
+  Serial.println("Turning Right.");
+  ledcWrite(L_IN1, TURN_SPEED); 
+  ledcWrite(L_IN2, 0);          
+  ledcWrite(R_IN3, 0);          
+  ledcWrite(R_IN4, TURN_SPEED); 
+  delay(duration);
+  StopMotors();
+}
+
+
+void IR_Sensor_setup() {
+  pinMode(IRSensor1, INPUT);
+  pinMode(IRSensor2, INPUT);
+  pinMode(IRSensor3, INPUT);
+  pinMode(IRSensor4, INPUT);
+}
+
+uint8_t IR_Sensor_read() {
+  int status1 = digitalRead(IRSensor1);
+  int status2 = digitalRead(IRSensor2);
+  int status3 = digitalRead(IRSensor3);
+  int status4 = digitalRead(IRSensor4);
+
+  uint8_t boundaryCode = (status4 << 3) | (status3 << 2) | (status2 << 1) | status1;
+  
+  Serial.print("Sensor States: ");
+  Serial.print("Front-Left: "); Serial.print(status1);
+  Serial.print(" | Front-Right: "); Serial.print(status2);
+  Serial.print(" | Back-Left: "); Serial.print(status3);
+  Serial.print(" | Back-Right: "); Serial.println(status4);
+  Serial.print("Boundary Code: ");
+  Serial.println(boundaryCode, BIN);
+
+  return boundaryCode;
+}
+
+
+void ultra_Sensor_setup() {
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+}
+
+float ultra_Sensor_read() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  long duration = pulseIn(echoPin, HIGH);
+  return (duration * 0.034) / 2;
+}
