@@ -163,21 +163,22 @@ void RotateToAngle(float setpoint){
 // Incomplete function, need to keep bot moving staright forward.
 // (UNFINISHED)
 void StraightForward(){
+  float maxPWM = 255;
   float setpoint = 0;
   float angle = 0;
   float error = setpoint;
   float PWM_L = 0;
   float PWM_R = 0;
-  float Kp = 255/setpoint;
+  float Kp = maxPWM/360;
   if (error < 0){
     while (error <= -2){
-      PWM_L = error * Kp;
-      PWM_R = error * Kp;
+      PWM_L = maxPWM - abs(error * Kp);
+      PWM_R = maxPWM - abs(error * Kp);
 
-      ledcWrite(L_IN1, int(PWM_L));  // Medium speed forward for left motor
-      ledcWrite(L_IN2, 0);
-      ledcWrite(R_IN3, 0);    // Right motor IN3 off
-      ledcWrite(R_IN4, int(PWM_R));
+      ledcWrite(L_IN1, int(PWM_L)); // L Forward == maxPWM - error Correction
+      ledcWrite(L_IN2, 0);          // L Backward == 0
+      ledcWrite(R_IN3, maxPWM);     // R Forward == maxPWM
+      ledcWrite(R_IN4, 0);          // R Backward
 
       angle += readGyro();
       error = setpoint + angle;
@@ -186,13 +187,13 @@ void StraightForward(){
   }
   else{
     while (error >= 2){
-      PWM_L = error * Kp;
-      PWM_R = error * Kp;
-      
-      ledcWrite(L_IN1, 0);  // Medium speed forward for left motor
-      ledcWrite(L_IN2, int(PWM_L));
-      ledcWrite(R_IN3, int(PWM_R));    // Right motor IN3 off
-      ledcWrite(R_IN4, 0);
+      PWM_L = 255 - abs(error * Kp);
+      PWM_R = 255 - abs(error * Kp);
+    
+      ledcWrite(L_IN1, maxPWM);     // L Forward == maxPWM
+      ledcWrite(L_IN2, 0);          // L Backward == 0
+      ledcWrite(R_IN3, int(PWM_L)); // R Forward == maxPWM - error Correction
+      ledcWrite(R_IN4, 0);          // R Backward == 0
 
       angle += readGyro();
       error = setpoint - angle;
