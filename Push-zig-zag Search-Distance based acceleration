@@ -18,18 +18,18 @@ const int R_IN4 = 16;  // Control pin 2 for right motor
 // PWM frequency and resolution settings for ESP32
 const int PWMFreq = 1000;       // PWM frequency in Hz
 const int PWMResolution = 8;    // PWM resolution (8 bits)
-const int MAX_SPEED = 180;      // Maximum PWM duty cycle
-const int MIN_SPEED = 60;        // Minimum PWM duty cycle
+const int MAX_SPEED = 130;      // Maximum PWM duty cycle
+const int MIN_SPEED = 100;        // Minimum PWM duty cycle
 const int STEP_DELAY = 1000;    // Delay between speed steps (in milliseconds)
-const int BASE_SPEED = 60;
-const int TURN_SPEED = 120;
+const int BASE_SPEED = 130;
+const int TURN_SPEED = 80;
 
 // Thresholds
 //ULTRASONIC----------------------------
-const int detectionThreshold = 30;
-const int maxDetectionDistance = 80;
+const int detectionThreshold = 50;
+const int maxDetectionDistance =50;
 //IR------------------------------------
-const int objectCloseRangeThreshold = 15;
+const int objectCloseRangeThreshold = 10;
 
 // State Machine
 enum State { SEARCHING, MOVING_FORWARD, AVOID, STOPPED };
@@ -74,7 +74,7 @@ void setup() {
 
 
   // Create the sensor and navigation tasks
-  xTaskCreatePinnedToCore(TaskSensors, "TaskSensors", 10000, NULL, 3, &Task1, 1);  // Core 1 for sensors and state management
+  xTaskCreatePinnedToCore(TaskSensors, "TaskSensors", 10000, NULL, 2, &Task1, 1);  // Core 1 for sensors and state management
   xTaskCreatePinnedToCore(TaskNavigation, "TaskNavigation", 10000, NULL, 2, &Task2, 0);  // Core 0 for motor control
 }
 
@@ -85,7 +85,7 @@ void loop() {
 void TaskSensors(void *pvParameters) {
   for (;;) {
     float distance = ultra_Sensor_read();
-    opponentDetected = (distance < maxDetectionDistance);
+    opponentDetected = (distance < detectionThreshhold);
 
     // Only read IR sensors if the object is not within close range
     if (distance > objectCloseRangeThreshold) {
@@ -98,50 +98,6 @@ void TaskSensors(void *pvParameters) {
     vTaskDelay(100 / portTICK_PERIOD_MS);
   }
 }
-
-// Function to calculate speed based on the distance to an object
-int calculateSpeed(float distance) {
-  if (distance > maxDetectionDistance) {
-    // If the object is too far, use the minimum speed
-    return MIN_SPEED;
-  } else if (distance <= detectionThreshold) {
-    // If the object is very close, use the maximum speed
-    return MAX_SPEED;
-  } else {
-    // Map the distance proportionally to the speed range
-    return map(distance, maxDetectionDistance, detectionThreshold, MIN_SPEED, MAX_SPEED);
-  }
-}
-
-// Core 0: Navigation and motor control
-void TaskNavigation(void *pvParameters) {
-  for (;;) {
-
-    float distance = ultra_Sensor_read();
-    int speed = calculateSpeed(distance); 
-
-    switch (currentState) {
-      case SEARCHING:
-      Serial.println("Searching.");
-      ZigzagSearch();
-        break;
-      case MOVING_FORWARD:
-      Serial.println("Moving Forward.");
-       ForwardDetect(speed);
-        break;
-        case AVOID:
-      Serial.println("Avoid.");
-       handleBoundaryMovement();
-        break;
-      case STOPPED:
-      Serial.println("Stopped.");
-      StopMotors();
-        break;
-    }
-    vTaskDelay(100/ portTICK_PERIOD_MS);
-  }
-}
-
 
 // Handle state changes based on sensor input
 void changeState(float distance) {
@@ -163,6 +119,49 @@ void changeState(float distance) {
     Serial.println("Searching for an object.");
   }
 }
+
+// Function to calculate speed based on the distance to an object
+int calculateSpeed(float distance) {
+  if (distance > maxDetectionDistance) {
+    // If the object is too far, use the minimum speed
+    return MIN_SPEED;
+  } else if (distance <= detectionThreshold) {
+    // If the object is very close, use the maximum speed
+    return MAX_SPEED;
+  } else {
+    // Map the distance proportionally to the speed range
+    return map(distance, maxDetectionDistance, detectionThreshold, MIN_SPEED, MAX_SPEED);
+  }
+}
+
+// Core 0: Navigation and motor control
+void TaskNavigation(void *pvParameters) {
+  for (;;) {
+
+    switch (currentState) {
+      case SEARCHING:
+      Serial.println("Searching.");
+      ZigzagSearch();
+        break;
+      case MOVING_FORWARD:
+      Serial.println("Moving Forward.");
+      float distance = ultra_Sensor_read();
+      int speed = calculateSpeed(distance); 
+       ForwardDetect(speed);
+        break;
+        case AVOID:
+      Serial.println("Avoid.");
+       handleBoundaryMovement();
+        break;
+      case STOPPED:
+      Serial.println("Stopped.");
+      StopMotors();
+        break;
+    }
+    vTaskDelay(100/ portTICK_PERIOD_MS);
+  }
+}
+
 
 void handleBoundaryMovement() {
   switch (boundaryCode) {
@@ -238,10 +237,10 @@ void ForwardDetect(int speed) {
 }
 
 void Forward() {
-  ledcWrite(L_IN1, 100);  
+  ledcWrite(L_IN1, 180);  
   ledcWrite(L_IN2, 0);  
 
-  ledcWrite(R_IN3,100); 
+  ledcWrite(R_IN3,180); 
   ledcWrite(R_IN4, 0);   
 }
 
@@ -275,7 +274,7 @@ void Reverse() {
     ledcWrite(L_IN2, 250);           
     ledcWrite(R_IN3, 0);           
     ledcWrite(R_IN4, 250);           
-    delay(500); 
+    delay(800); 
 }
 
 void StopMotors() {
