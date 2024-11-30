@@ -1,0 +1,283 @@
+//// S.R.N Robotics
+// Nadia Al-Shewear
+// Rogelio Lucio
+// Samuel Winburn
+
+
+/*********
+  Rui Santos
+  Complete project details at https://randomnerdtutorials.com  
+*********/
+#include <DFRobot_BMI160.h>
+
+const int L_IN1 = 2;   // Control pin 1 for left motor
+const int L_IN2 = 0;   // Control pin 2 for left motor
+const int R_IN3 = 4;   // Control pin 1 for right motor
+const int R_IN4 = 16;  // Control pin 2 for right motor
+
+// PWM frequency and resolution settings for ESP32
+const int PWMFreq = 1000;       // PWM frequency in Hz
+const int PWMResolution = 8;    // PWM resolution (8 bits)
+const int MAX_SPEED = 255;      // Maximum PWM duty cycle
+const int MIN_SPEED = 0;        // Minimum PWM duty cycle
+const int STEP_DELAY = 1000;      // Delay between speed steps (in milliseconds)
+
+// Declarations for the BMI160
+DFRobot_BMI160 bmi160;
+const int8_t i2c_addr = 0x69;
+
+
+void setup() {
+  // put your setup code here, to run once:
+  ledcAttach(L_IN1,  PWMFreq, PWMResolution);
+  ledcAttach(L_IN2,  PWMFreq, PWMResolution);
+  ledcAttach(R_IN3,  PWMFreq, PWMResolution);
+  ledcAttach(R_IN4,  PWMFreq, PWMResolution);
+
+
+  Serial.begin(115200); 
+  //pinMode(led1, OUTPUT);
+  //pinMode(led2, OUTPUT);
+
+  delay(100);
+  
+  //init the hardware bmin160  
+  if (bmi160.softReset() != BMI160_OK){
+    Serial.println("reset false");
+    while(1);
+  }
+  
+  //set and init the bmi160 i2c address
+  if (bmi160.I2cInit(i2c_addr) != BMI160_OK){
+    Serial.println("init false");
+    while(1);
+  }
+}
+
+
+void loop() {
+  RotateToAngle(45);
+  delay(1000);
+}
+
+
+
+// Read the Gyroscope
+float readGyro(){
+  float angle = 0;
+  int rslt;
+  int trash;
+  float Yaw = 0;
+  ////only read gyro data from bmi160
+  int16_t accelGyro[6]={0}; 
+  //get both accel and gyro data from bmi160
+  //parameter accelGyro is the pointer to store the data
+  rslt = bmi160.getAccelGyroData(accelGyro);
+
+  if(rslt == 0){
+    for(int i=0;i<6;i++){
+      if (i==2){
+        //the first three are gyro data
+        Yaw = (((accelGyro[i]+11.85)/128)*0.6);
+        if(Yaw > 0.15){
+          angle += Yaw;
+        }
+        else if(Yaw <= 0.15 and Yaw >=-0.15){
+          angle += 0;
+        }
+        else{
+          angle -= abs(Yaw);
+        }
+        //Serial.print(Yaw);Serial.print("\t"); Serial.print(Yaw/3.14); Serial.print("\t"); Serial.print(angle); Serial.print("\t");
+        //Serial.println(accelGyro[i]*3.14/180.0);
+      }
+      else{
+        //the following three data are accel data
+        trash = accelGyro[i];
+      }
+    }
+    
+    //Serial.println();
+  }else{
+    Serial.println("err");
+  }
+  delay(50);
+  return angle;
+}
+
+// Function to stop both motors
+void StopMotors() {
+  // Set all motor pins to zero for full stop
+  ledcWrite(L_IN1, 0);
+  ledcWrite(L_IN2, 0);
+  ledcWrite(R_IN3, 0);
+  ledcWrite(R_IN4, 0);
+}
+
+// Rotate to any desired angle
+void RotateToAngle(float setpoint){
+  float angle = 0;
+  float error = setpoint;
+  float PWM_L = 0;
+  float PWM_R = 0;
+  float Kp = 255/setpoint;
+  if (error < 0){
+    while (error <= -2){
+      PWM_L = error * Kp;
+      PWM_R = error * Kp;
+
+      ledcWrite(L_IN1, int(PWM_L)); // L Forward
+      ledcWrite(L_IN2, 0);          // L Backward == 0
+      ledcWrite(R_IN3, 0);          // R Forward == 0
+      ledcWrite(R_IN4, int(PWM_R)); // R Backward
+
+      angle += readGyro();
+      error = setpoint - angle;
+      //// Motor Controls
+    }
+    ledcWrite(L_IN1, 0);          // L Forward == 0
+    ledcWrite(L_IN2, 0);          // L Backward == 0
+    ledcWrite(R_IN3, 0);          // R Forward == 0
+    ledcWrite(R_IN4, 0);          // R Backward == 0
+  }
+  else{
+    while (error >= 2){
+      PWM_L = error * Kp;
+      PWM_R = error * Kp;
+      
+      ledcWrite(L_IN1, 0);          // L Forward == 0
+      ledcWrite(L_IN2, int(PWM_L)); // L Backward 
+      ledcWrite(R_IN3, int(PWM_R)); // R Forward
+      ledcWrite(R_IN4, 0);          // R Backward == 0
+
+      angle += readGyro();
+      error = setpoint - angle;
+    }
+    ledcWrite(L_IN1, 0);          // L Forward == 0
+    ledcWrite(L_IN2, 0);          // L Backward == 0
+    ledcWrite(R_IN3, 0);          // R Forward == 0
+    ledcWrite(R_IN4, 0);          // R Backward == 0
+  }
+}
+
+// Incomplete function, need to keep bot moving staright forward.
+// (UNFINISHED)
+void StraightForward(){
+  float maxPWM = 255;
+  float setpoint = 0;
+  float angle = 0;
+  float error = setpoint;
+  float PWM_L = 0;
+  float PWM_R = 0;
+  float Kp = maxPWM/360;
+
+  ledcWrite(L_IN1, maxPWM);     // L Forward == maxPWM
+  ledcWrite(L_IN2, 0);          // L Backward == 0
+  ledcWrite(R_IN3, maxPWM);     // R Forward == maxPWM
+  ledcWrite(R_IN4, 0);          // R Backward == 0
+
+  angle += readGyro();
+  error = setpoint + angle;
+
+  if (error < 0){
+    while (error <= -2){
+      PWM_L = maxPWM - abs(error * Kp);
+      PWM_R = maxPWM - abs(error * Kp);
+
+      ledcWrite(L_IN1, int(PWM_L)); // L Forward == maxPWM - error Correction
+      ledcWrite(L_IN2, 0);          // L Backward == 0
+      ledcWrite(R_IN3, maxPWM);     // R Forward == maxPWM
+      ledcWrite(R_IN4, 0);          // R Backward == 0
+
+      angle += readGyro();
+      error = setpoint + angle;
+      //// Motor Controls
+    }
+  }
+  else{
+    while (error >= 2){
+      PWM_L = 255 - abs(error * Kp);
+      PWM_R = 255 - abs(error * Kp);
+    
+      ledcWrite(L_IN1, maxPWM);     // L Forward == maxPWM
+      ledcWrite(L_IN2, 0);          // L Backward == 0
+      ledcWrite(R_IN3, int(PWM_L)); // R Forward == maxPWM - error Correction
+      ledcWrite(R_IN4, 0);          // R Backward == 0
+
+      angle += readGyro();
+      error = setpoint + angle;
+    }
+  }
+}
+
+
+void RotateInPlace() {
+  // Rotate clockwise by driving left motor forward and right motor backward
+  ledcWrite(L_IN1, 200);  // Medium speed forward for left motor
+  ledcWrite(L_IN2, 0);    // Left motor IN2 off
+
+  ledcWrite(R_IN3, 0);    // Right motor IN3 off
+  ledcWrite(R_IN4, 200);  // Medium speed backward for right motor
+}
+
+// Robot moves backward
+void Reverse() {
+  // Move both motors backward
+  ledcWrite(L_IN1, 0);    // Left motor IN1 off
+  ledcWrite(L_IN2, 200);  // Medium speed backward for left motor
+
+  ledcWrite(R_IN3, 0);    // Right motor IN3 off
+  ledcWrite(R_IN4, 200);  // Medium speed backward for right motor
+}
+
+// Robot moves forward
+void Forward() {
+  // Move both motors forward
+  ledcWrite(L_IN1, 255);  // Full speed forward for left motor
+  ledcWrite(L_IN2, 0);    // Left motor IN2 off
+
+  ledcWrite(R_IN3, 255);  // Full speed forward for right motor
+  ledcWrite(R_IN4, 0);    // Right motor IN4 off
+
+}
+// Function to gradually increase speed for forward movement
+// (UNFINISHED)
+void accelerateForward(int targetSpeed) {
+  for (int speed = MIN_SPEED; speed <= targetSpeed; speed += 10) {
+    ledcWrite(L_IN1, speed);  // Left motor IN1 forward
+    ledcWrite(L_IN2, 0);      // Left motor IN2 off
+    ledcWrite(R_IN3, speed);  // Right motor IN3 forward
+    ledcWrite(R_IN4, 0);      // Right motor IN4 off
+    delay(STEP_DELAY);        // Delay between speed steps
+  }
+  Serial.println("Accelerating Forward");
+}
+
+// Function to gradually increase speed for backward movement
+// (UNFINISHED)
+void accelerateBackward(int targetSpeed) {
+  for (int speed = MIN_SPEED; speed <= targetSpeed; speed += 10) {
+    ledcWrite(L_IN1, 0);      // Left motor IN1 off
+    ledcWrite(L_IN2, speed);  // Left motor IN2 backward
+    ledcWrite(R_IN3, 0);      // Right motor IN3 off
+    ledcWrite(R_IN4, speed);  // Right motor IN4 backward
+    delay(STEP_DELAY);        // Delay between speed steps
+  }
+  Serial.println("Accelerating Backward");
+}
+
+// Function to gradually decrease speed to stop
+// (UNFINISHED)
+void decelerateStop() {
+  int currentSpeed = MAX_SPEED;
+  while (currentSpeed > MIN_SPEED) {
+    ledcWrite(L_IN1, currentSpeed);  // Left motor IN1
+    ledcWrite(L_IN2, 0);             // Left motor IN2 off
+    ledcWrite(R_IN3, currentSpeed);  // Right motor IN3
+    ledcWrite(R_IN4, 0);             // Right motor IN4 off
+    currentSpeed -= 10;              // Reduce speed gradually
+    delay(STEP_DELAY);               // Delay between speed steps
+  }
+  StopMotors();
+  Serial.println("Decelerating to Stop");
+}
